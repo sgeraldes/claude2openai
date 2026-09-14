@@ -26,8 +26,37 @@ func TestMapBedrockModel(t *testing.T) {
 	}
 }
 
+func TestResolveBedrockEffort(t *testing.T) {
+	req := &anthropicRequest{}
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "high" {
+		t.Fatalf("astra default = %q", got)
+	}
+	if got := resolveBedrockEffort(req, "us.openai.gpt-5.6-sol"); got != "high" {
+		t.Fatalf("sol default = %q", got)
+	}
+	if got := resolveBedrockEffort(req, "us.openai.gpt-5.6-terra"); got != "max" {
+		t.Fatalf("terra default = %q", got)
+	}
+	if got := resolveBedrockEffort(req, "us.openai.gpt-5.6-luna"); got != "medium" {
+		t.Fatalf("luna default = %q", got)
+	}
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "low")
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "low" {
+		t.Fatalf("Claude Code effort = %q", got)
+	}
+	req.Effort = "high"
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "high" {
+		t.Fatalf("request effort = %q", got)
+	}
+	t.Setenv("BEDROCK_EFFORT", "medium")
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "medium" {
+		t.Fatalf("BEDROCK_EFFORT precedence = %q", got)
+	}
+}
+
 func TestTranslateBedrockRequest(t *testing.T) {
 	t.Setenv("BEDROCK_MODEL", "terra")
+	t.Setenv("BEDROCK_EFFORT", "max")
 	temperature, topP := 0.4, 0.8
 	req := &anthropicRequest{
 		Model: "claude-opus-5", MaxTokens: 321, System: json.RawMessage(`[{"type":"text","text":"system"}]`),
@@ -51,6 +80,10 @@ func TestTranslateBedrockRequest(t *testing.T) {
 	}
 	if out.InferenceConfig.Temperature != nil || out.InferenceConfig.TopP != nil {
 		t.Fatal("temperature and top_p must be omitted for OpenAI Bedrock models")
+	}
+	fields, err := out.AdditionalModelRequestFields.MarshalSmithyDocument()
+	if err != nil || string(fields) != `{"reasoning":{"effort":"max"}}` {
+		t.Fatalf("additional request fields = %s, err = %v", fields, err)
 	}
 	if len(out.System) != 1 || len(out.Messages) != 2 || out.ToolConfig == nil || len(out.ToolConfig.Tools) != 1 {
 		t.Fatalf("translated shape: %+v", out)

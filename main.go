@@ -28,6 +28,8 @@ Environment:
   BEDROCK_OPENAI=1  Select Bedrock Converse instead of Codex
   BEDROCK_MODEL     astra, sol, terra, luna, or a full inference profile id
   BEDROCK_SMALL_MODEL  Model for incoming haiku requests (default luna)
+  BEDROCK_EFFORT       low, medium, high, or max; overrides Claude Code effort
+                        and model defaults (astra/sol=high, terra=max, luna=medium)
 `, defaultPort, codexDefaultModel)
 }
 

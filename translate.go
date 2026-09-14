@@ -14,19 +14,25 @@ import (
 // ---------- Anthropic request types ----------
 
 type anthropicRequest struct {
-	Model         string             `json:"model"`
-	MaxTokens     int                `json:"max_tokens"`
-	Messages      []anthropicMessage `json:"messages"`
-	System        json.RawMessage    `json:"system,omitempty"` // string or []block
-	Tools         []anthropicTool    `json:"tools,omitempty"`
-	ToolChoice    json.RawMessage    `json:"tool_choice,omitempty"`
-	Stream        bool               `json:"stream"`
-	StopSequences []string           `json:"stop_sequences,omitempty"`
-	Temperature   *float64           `json:"temperature,omitempty"`
-	TopP          *float64           `json:"top_p,omitempty"`
-	TopK          *int               `json:"top_k,omitempty"`
-	Thinking      *anthropicThinking `json:"thinking,omitempty"`
-	Metadata      map[string]any     `json:"metadata,omitempty"`
+	Model         string                 `json:"model"`
+	MaxTokens     int                    `json:"max_tokens"`
+	Messages      []anthropicMessage     `json:"messages"`
+	System        json.RawMessage        `json:"system,omitempty"` // string or []block
+	Tools         []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice    json.RawMessage        `json:"tool_choice,omitempty"`
+	Stream        bool                   `json:"stream"`
+	StopSequences []string               `json:"stop_sequences,omitempty"`
+	Temperature   *float64               `json:"temperature,omitempty"`
+	TopP          *float64               `json:"top_p,omitempty"`
+	TopK          *int                   `json:"top_k,omitempty"`
+	Thinking      *anthropicThinking     `json:"thinking,omitempty"`
+	Effort        string                 `json:"effort,omitempty"`
+	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+	Metadata      map[string]any         `json:"metadata,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 type anthropicThinking struct {
@@ -396,7 +402,7 @@ func translateToolChoice(raw json.RawMessage) (any, bool) {
 
 // thinkingEffort maps an Anthropic thinking budget to a Codex reasoning effort.
 func thinkingEffort(t *anthropicThinking) (effort string, ok bool) {
-	if t == nil || t.Type != "enabled" {
+	if t == nil || (t.Type != "enabled" && t.Type != "adaptive") {
 		return "", false
 	}
 	switch {

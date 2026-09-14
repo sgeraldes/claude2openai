@@ -70,6 +70,61 @@ func mapBedrockModel(requested string) string {
 	return bedrockModelAlias(os.Getenv("BEDROCK_MODEL"))
 }
 
+func bedrockEffortDefault(model string) string {
+	switch {
+	case strings.Contains(model, "gpt-5.6-terra"):
+		return "max"
+	case strings.Contains(model, "gpt-5.6-luna"):
+		return "medium"
+	default:
+		return "high"
+	}
+}
+
+func isBedrockEffort(value string) bool {
+	switch value {
+	case "low", "medium", "high", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func claudeCodeEffort(req *anthropicRequest) string {
+	if req.Effort != "" {
+		return strings.ToLower(strings.TrimSpace(req.Effort))
+	}
+	if req.OutputConfig != nil && req.OutputConfig.Effort != "" {
+		return strings.ToLower(strings.TrimSpace(req.OutputConfig.Effort))
+	}
+	if value := strings.TrimSpace(os.Getenv("CLAUDE_CODE_EFFORT_LEVEL")); value != "" {
+		return strings.ToLower(value)
+	}
+	if value, ok := thinkingEffort(req.Thinking); ok {
+		return value
+	}
+	return ""
+}
+
+func resolveBedrockEffort(req *anthropicRequest, model string) string {
+	if value := strings.ToLower(strings.TrimSpace(os.Getenv("BEDROCK_EFFORT"))); value != "" {
+		if isBedrockEffort(value) {
+			return value
+		}
+		log.Printf("bedrock: ignoring invalid BEDROCK_EFFORT %q; expected low, medium, high, or max", value)
+	}
+	if value := claudeCodeEffort(req); value != "" {
+		if value == "xhigh" {
+			return "high"
+		}
+		if isBedrockEffort(value) {
+			return value
+		}
+		log.Printf("bedrock: ignoring unsupported Claude Code effort %q", value)
+	}
+	return bedrockEffortDefault(model)
+}
+
 func loadBedrockClient(ctx context.Context) (bedrockConverseClient, error) {
 	profile := strings.TrimSpace(os.Getenv("AWS_PROFILE"))
 	region := strings.TrimSpace(os.Getenv("AWS_REGION"))
@@ -127,12 +182,14 @@ func translateBedrockRequest(req *anthropicRequest) (*bedrockruntime.ConverseStr
 	if maxTokens <= 0 {
 		maxTokens = 8192
 	}
+	effort := resolveBedrockEffort(req, model)
 	out := &bedrockruntime.ConverseStreamInput{
 		ModelId: aws.String(model),
 		InferenceConfig: &brtypes.InferenceConfiguration{
 			MaxTokens:     &maxTokens,
 			StopSequences: append([]string(nil), req.StopSequences...),
 		},
+		AdditionalModelRequestFields: document.NewLazyDocument(map[string]any{"reasoning": map[string]string{"effort": effort}}),
 	}
 	for _, b := range parseBlocks(req.System) {
 		if b.Type == "text" && b.Text != "" {
@@ -313,7 +370,7 @@ func (s *bedrockServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error(), false)
 		return
 	}
-	log.Printf("bedrock messages: model %q -> %q, %d messages, stream=%v", req.Model, aws.ToString(input.ModelId), len(input.Messages), req.Stream)
+	log.Printf("bedrock messages: model %q -> %q, effort=%q, %d messages, stream=%v", req.Model, aws.ToString(input.ModelId), resolveBedrockEffort(&req, aws.ToString(input.ModelId)), len(input.Messages), req.Stream)
 	response, err := s.converseWithRetry(r.Context(), input)
 	if err != nil {
 		status, errType, message := bedrockError(err)
@@ -610,11 +667,13 @@ func runBedrockTest() {
 	defer proxy.Close()
 
 	model := mapBedrockModel("claude-test")
-	body, _ := json.Marshal(&anthropicRequest{
-		Model: "claude-test", MaxTokens: 128,
+	testRequest := &anthropicRequest{
+		Model: "claude-test", MaxTokens: 512,
 		System:   jsonString("You are a concise assistant."),
 		Messages: []anthropicMessage{{Role: "user", Content: jsonString("Reply with exactly: BEDROCK OPENAI OK")}},
-	})
+	}
+	effort := resolveBedrockEffort(testRequest, model)
+	body, _ := json.Marshal(testRequest)
 	request, err := http.NewRequest(http.MethodPost, proxy.URL+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "claude2openai bedrock test: %v\n", err)
@@ -638,11 +697,18 @@ func runBedrockTest() {
 		os.Exit(1)
 	}
 	fmt.Printf("model: %s\n", model)
+	fmt.Printf("reasoning effort: %s\n", effort)
+	var reply string
 	for _, block := range msg.Content {
 		if block["type"] == "text" {
-			fmt.Printf("reply: %s\n", block["text"])
+			reply += fmt.Sprint(block["text"])
 		}
 	}
+	if reply == "" {
+		fmt.Fprintln(os.Stderr, "claude2openai bedrock test: response contained no text")
+		os.Exit(1)
+	}
+	fmt.Printf("reply: %s\n", reply)
 	fmt.Printf("usage: %d input / %d output tokens\n", msg.Usage["input_tokens"], msg.Usage["output_tokens"])
 	fmt.Println("test: OK")
 }

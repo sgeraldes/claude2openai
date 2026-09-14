@@ -143,7 +143,7 @@ export AWS_PROFILE=dfx5-dfx5-internal-apps-dev-administratoraccess
 export AWS_REGION=us-west-2
 BEDROCK_MODEL=astra claude2openai --backend bedrock test
 BEDROCK_MODEL=sol   claude2openai --backend bedrock test
-BEDROCK_MODEL=terra claude2openai --backend bedrock test
+BEDROCK_MODEL=terra BEDROCK_EFFORT=max claude2openai --backend bedrock test
 claude2openai --backend bedrock server 3458
 ```
 
@@ -162,6 +162,41 @@ También acepta un inference profile ID completo. `BEDROCK_SMALL_MODEL` seleccio
 el modelo para solicitudes cuyo ID entrante contiene `haiku` (default `luna`).
 `AWS_PROFILE` y `AWS_REGION` controlan las credenciales SigV4; perfiles SSO son
 compatibles mediante el credential chain de AWS SDK for Go v2.
+
+### Esfuerzo de razonamiento
+
+Para estos perfiles OpenAI, ConverseStream acepta el campo adicional
+`{"reasoning":{"effort":"<valor>"}}`. La forma plana
+`{"reasoning_effort":"<valor>"}` fue rechazada por Astra, Sol, Terra y Luna con
+`unknown_parameter` el 2026-09-14. Los cuatro perfiles aceptaron `low`, `medium`,
+`high` y `max` mediante llamadas reales.
+
+La precedencia es `BEDROCK_EFFORT` > `effort` / `output_config.effort` de la
+solicitud Anthropic > `CLAUDE_CODE_EFFORT_LEVEL` > `thinking` de la solicitud >
+default del modelo. `xhigh` de Claude Code se normaliza a `high` porque Bedrock
+sólo acepta los cuatro valores anteriores. Defaults: Astra `high`, Sol `high`,
+Terra `max`, Luna `medium`.
+
+```bash
+claude2bedrock --openai --model luna --effort medium -p "revisa el deploy"
+claude2bedrock --openai --model terra --effort max -p "implementa el cambio"
+claude2bedrock --openai test --model terra --effort max
+```
+
+El log de cada request incluye el modelo resuelto y el esfuerzo enviado. El
+subcomando `test` imprime ambos antes de la respuesta.
+
+### Validación real (2026-09-14)
+
+| Perfil | Default enviado | Respuesta de `test` |
+|---|---|---|
+| `us.openai.gpt-6-astra` | `high` | `BEDROCK OPENAI OK` |
+| `us.openai.gpt-5.6-sol` | `high` | `BEDROCK OPENAI OK` |
+| `us.openai.gpt-5.6-terra` | `max` | `BEDROCK OPENAI OK` |
+| `us.openai.gpt-5.6-luna` | `medium` | `BEDROCK OPENAI OK` |
+
+Cada perfil también aceptó una llamada separada con cada valor: `low`, `medium`,
+`high` y `max`.
 
 La traducción incluye system, texto, imágenes base64, tools, `tool_use`,
 `tool_result` (incluido estado de error), tool choice, `max_tokens` y
