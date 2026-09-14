@@ -14,18 +14,19 @@ import (
 // ---------- Anthropic request types ----------
 
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	Messages    []anthropicMessage `json:"messages"`
-	System      json.RawMessage    `json:"system,omitempty"` // string or []block
-	Tools       []anthropicTool    `json:"tools,omitempty"`
-	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
-	Stream      bool               `json:"stream"`
-	Temperature *float64           `json:"temperature,omitempty"`
-	TopP        *float64           `json:"top_p,omitempty"`
-	TopK        *int               `json:"top_k,omitempty"`
-	Thinking    *anthropicThinking `json:"thinking,omitempty"`
-	Metadata    map[string]any     `json:"metadata,omitempty"`
+	Model         string             `json:"model"`
+	MaxTokens     int                `json:"max_tokens"`
+	Messages      []anthropicMessage `json:"messages"`
+	System        json.RawMessage    `json:"system,omitempty"` // string or []block
+	Tools         []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice    json.RawMessage    `json:"tool_choice,omitempty"`
+	Stream        bool               `json:"stream"`
+	StopSequences []string           `json:"stop_sequences,omitempty"`
+	Temperature   *float64           `json:"temperature,omitempty"`
+	TopP          *float64           `json:"top_p,omitempty"`
+	TopK          *int               `json:"top_k,omitempty"`
+	Thinking      *anthropicThinking `json:"thinking,omitempty"`
+	Metadata      map[string]any     `json:"metadata,omitempty"`
 }
 
 type anthropicThinking struct {
@@ -86,13 +87,13 @@ type responsesReason struct {
 }
 
 type responsesItem struct {
-	Type      string                `json:"type"`
-	Role      string                `json:"role,omitempty"`
-	Content   []responsesContent    `json:"content,omitempty"`
-	CallID    string                `json:"call_id,omitempty"`
-	Name      string                `json:"name,omitempty"`
-	Arguments string                `json:"arguments,omitempty"`
-	Output    string                `json:"output,omitempty"`
+	Type      string             `json:"type"`
+	Role      string             `json:"role,omitempty"`
+	Content   []responsesContent `json:"content,omitempty"`
+	CallID    string             `json:"call_id,omitempty"`
+	Name      string             `json:"name,omitempty"`
+	Arguments string             `json:"arguments,omitempty"`
+	Output    string             `json:"output,omitempty"`
 }
 
 type responsesContent struct {
@@ -127,14 +128,14 @@ const codexDefaultModel = codexModelMain
 // GET /backend-api/codex/models on 2026-07-19. Prefix rules in mapModel cover
 // future ids; this set mainly documents what the account serves.
 var knownCodexModels = map[string]bool{
-	"gpt-5.6-sol":        true,
-	"gpt-5.6-terra":      true,
-	"gpt-5.6-luna":       true,
-	"gpt-5.5":            true,
-	"gpt-5.4":            true,
-	"gpt-5.4-mini":       true,
+	"gpt-5.6-sol":         true,
+	"gpt-5.6-terra":       true,
+	"gpt-5.6-luna":        true,
+	"gpt-5.5":             true,
+	"gpt-5.4":             true,
+	"gpt-5.4-mini":        true,
 	"gpt-5.3-codex-spark": true,
-	"codex-auto-review":  true,
+	"codex-auto-review":   true,
 }
 
 // mapModel routes an incoming model id to a Codex model. Recognized gpt/codex
@@ -287,6 +288,16 @@ func translateMessages(messages []anthropicMessage) []responsesItem {
 					if b.IsError {
 						out = "Error: " + out
 					}
+					// The Responses API requires `output` on every
+					// function_call_output item, but the field is tagged
+					// omitempty (shared struct), so an empty tool result would
+					// drop the key and the backend answers 400 "Missing
+					// required parameter: input[N].output". Tools legitimately
+					// return nothing (a clean `git status --porcelain`, a grep
+					// with no matches), so substitute a placeholder.
+					if out == "" {
+						out = "(no output)"
+					}
 					items = append(items, responsesItem{
 						Type:   "function_call_output",
 						CallID: b.ToolUseID,
@@ -360,9 +371,9 @@ func translateToolChoice(raw json.RawMessage) (any, bool) {
 		}
 	}
 	var tc struct {
-		Type                  string `json:"type"`
-		Name                  string `json:"name"`
-		DisableParallelToolUse bool  `json:"disable_parallel_tool_use"`
+		Type                   string `json:"type"`
+		Name                   string `json:"name"`
+		DisableParallelToolUse bool   `json:"disable_parallel_tool_use"`
 	}
 	if err := json.Unmarshal(raw, &tc); err != nil {
 		return "auto", true

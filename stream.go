@@ -13,22 +13,22 @@ import (
 // ---------- upstream (Responses API) event ----------
 
 type responsesEvent struct {
-	Type         string          `json:"type"`
-	OutputIndex  int             `json:"output_index"`
-	ContentIndex int             `json:"content_index"`
-	ItemID       string          `json:"item_id"`
-	Delta        string          `json:"delta"`
-	Text         string          `json:"text"`
-	Arguments    string          `json:"arguments"`
+	Type         string               `json:"type"`
+	OutputIndex  int                  `json:"output_index"`
+	ContentIndex int                  `json:"content_index"`
+	ItemID       string               `json:"item_id"`
+	Delta        string               `json:"delta"`
+	Text         string               `json:"text"`
+	Arguments    string               `json:"arguments"`
 	Item         *responsesOutputItem `json:"item"`
 	Part         *struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"part"`
-	Response  *responsesObject `json:"response"`
-	Code      string           `json:"code"`
-	Message   string           `json:"message"`
-	Param     string           `json:"param"`
+	Response *responsesObject `json:"response"`
+	Code     string           `json:"code"`
+	Message  string           `json:"message"`
+	Param    string           `json:"param"`
 }
 
 type responsesOutputItem struct {
@@ -127,18 +127,18 @@ type openBlock struct {
 }
 
 type streamTranslator struct {
-	clientModel   string // model name to echo back to the client
-	wantThinking  bool   // client requested Anthropic thinking blocks
-	messageID     string
-	started       bool
-	nextIndex     int
-	blocks        map[int]*openBlock // keyed by upstream output_index
-	sawToolUse    bool
-	sawText       bool
+	clientModel    string // model name to echo back to the client
+	wantThinking   bool   // client requested Anthropic thinking blocks
+	messageID      string
+	started        bool
+	nextIndex      int
+	blocks         map[int]*openBlock // keyed by upstream output_index
+	sawToolUse     bool
+	sawText        bool
 	finishUsageIn  int
 	finishUsageOut int
-	stopReason    string
-	finished      bool
+	stopReason     string
+	finished       bool
 }
 
 func newStreamTranslator(clientModel string, wantThinking bool) *streamTranslator {
@@ -413,14 +413,14 @@ func (t *streamTranslator) Finalize() []anthropicEvent {
 
 // anthropicMessageOut is the non-streaming Messages API response body.
 type anthropicMessageOut struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Role         string          `json:"role"`
-	Model        string          `json:"model"`
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Role         string           `json:"role"`
+	Model        string           `json:"model"`
 	Content      []map[string]any `json:"content"`
-	StopReason   string          `json:"stop_reason"`
-	StopSequence any             `json:"stop_sequence"`
-	Usage        map[string]int  `json:"usage"`
+	StopReason   string           `json:"stop_reason"`
+	StopSequence any              `json:"stop_sequence"`
+	Usage        map[string]int   `json:"usage"`
 }
 
 // aggregateEvents folds the emitted Anthropic events into a non-streaming
@@ -472,11 +472,10 @@ func aggregateEvents(events []anthropicEvent, clientModel string) (*anthropicMes
 				}
 			}
 			if usage, ok := m["usage"].(map[string]any); ok {
-				if v, ok := usage["input_tokens"].(float64); ok {
-					out.Usage["input_tokens"] = int(v)
-				}
-				if v, ok := usage["output_tokens"].(float64); ok {
-					out.Usage["output_tokens"] = int(v)
+				for _, key := range []string{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
+					if v, ok := usage[key].(float64); ok {
+						out.Usage[key] = int(v)
+					}
 				}
 			}
 		case "error":

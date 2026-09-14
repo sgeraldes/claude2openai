@@ -142,6 +142,47 @@ func TestTranslateMessagesToolResultErrorAndString(t *testing.T) {
 	}
 }
 
+// An empty tool result must still serialize an `output` key. The field is
+// tagged omitempty on a struct shared with other item types, so without a
+// placeholder the key vanishes and the backend rejects the whole conversation
+// with 400 "Missing required parameter: input[N].output".
+func TestTranslateMessagesEmptyToolResultKeepsOutputKey(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"empty string", `""`},
+		{"empty block list", `[]`},
+		{"blocks with no text", `[{"type":"text","text":""}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msgs := []anthropicMessage{
+				{Role: "user", Content: json.RawMessage(
+					`[{"type":"tool_result","tool_use_id":"toolu_empty","content":` + tc.content + `}]`)},
+			}
+			items := translateMessages(msgs)
+			if len(items) != 1 || items[0].Type != "function_call_output" {
+				t.Fatalf("items: %+v", items)
+			}
+			if items[0].Output == "" {
+				t.Fatalf("empty tool result produced an empty Output; omitempty will drop the key")
+			}
+			blob, err := json.Marshal(items[0])
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var round map[string]any
+			if err := json.Unmarshal(blob, &round); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if _, ok := round["output"]; !ok {
+				t.Errorf("serialized function_call_output is missing the output key: %s", blob)
+			}
+		})
+	}
+}
+
 func TestTranslateMessagesImage(t *testing.T) {
 	msgs := []anthropicMessage{
 		{Role: "user", Content: json.RawMessage(`[

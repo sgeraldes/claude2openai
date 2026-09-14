@@ -73,7 +73,7 @@ Two launchers live in `~/.local/bin/` (both on PATH):
 ```bash
 claude2openai                      # interactive Claude Code on Codex
 claude2openai -p "fix the typo in README.md"
-claude2openai server 3457 &        # persistent proxy (Git Bash)
+claude2openai server 3457          # persistent proxy; stop with Ctrl+C
 ```
 
 ## Model tiers
@@ -131,6 +131,46 @@ Models served by the account (verified via `GET /backend-api/codex/models`):
   thinking blocks. If thinking is not requested, reasoning items are dropped.
 - `/v1/messages/count_tokens` returns a local ~4-chars-per-token estimate.
 
+## Backend Bedrock (modelos OpenAI)
+
+El mismo binario también puede exponer Anthropic Messages sobre Amazon Bedrock
+ConverseStream para los modelos OpenAI. Este camino es necesario porque el modo
+Bedrock nativo de Claude Code usa el contrato Anthropic de InvokeModel; Astra,
+Sol, Terra y Luna usan Converse.
+
+```bash
+export AWS_PROFILE=dfx5-dfx5-internal-apps-dev-administratoraccess
+export AWS_REGION=us-west-2
+BEDROCK_MODEL=astra claude2openai --backend bedrock test
+BEDROCK_MODEL=sol   claude2openai --backend bedrock test
+BEDROCK_MODEL=terra claude2openai --backend bedrock test
+claude2openai --backend bedrock server 3458
+```
+
+El launcher recomendado es `claude2bedrock --openai`, incluido en `claude2all`.
+Inicia el proxy dentro del proceso, configura `ANTHROPIC_BASE_URL`, usa el perfil
+aislado `~/.claude-profiles/bedrock-openai` y cierra el listener al terminar.
+
+| Valor de `BEDROCK_MODEL` | Inference profile |
+|---|---|
+| `astra` (default) | `us.openai.gpt-6-astra` |
+| `sol` | `us.openai.gpt-5.6-sol` |
+| `terra` | `us.openai.gpt-5.6-terra` |
+| `luna` | `us.openai.gpt-5.6-luna` |
+
+También acepta un inference profile ID completo. `BEDROCK_SMALL_MODEL` selecciona
+el modelo para solicitudes cuyo ID entrante contiene `haiku` (default `luna`).
+`AWS_PROFILE` y `AWS_REGION` controlan las credenciales SigV4; perfiles SSO son
+compatibles mediante el credential chain de AWS SDK for Go v2.
+
+La traducción incluye system, texto, imágenes base64, tools, `tool_use`,
+`tool_result` (incluido estado de error), tool choice, `max_tokens` y
+`stop_sequences`. `temperature` y `top_p` se omiten porque GPT-5.6 los rechaza.
+Las respuestas streaming y no streaming se convierten al contrato Anthropic,
+incluido uso y stop reason. Limitaciones: `count_tokens` es una estimación local
+de caracteres/4; los bloques thinking se descartan (se registra una advertencia
+una vez); prompt caching no está implementado.
+
 ## Troubleshooting
 
 - **`codex token refresh failed ... run `codex login` again`** — your ChatGPT
@@ -150,4 +190,4 @@ go test ./...
 go build -ldflags "-s -w" -o claude2openai.exe .
 ```
 
-No third-party dependencies — Go standard library only.
+Dependencies: AWS SDK for Go v2 for Bedrock ConverseStream, SigV4 and SSO credentials.

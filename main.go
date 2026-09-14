@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // claude2openai — run Anthropic-API clients (Claude Code) against OpenAI Codex
@@ -12,47 +13,86 @@ import (
 const defaultPort = 3457
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `claude2openai — Claude Code on OpenAI Codex (ChatGPT OAuth)
+	fmt.Fprintf(os.Stderr, `claude2openai — Anthropic Messages proxy for Codex and Bedrock OpenAI
 
 Usage:
-  claude2openai server [port]   Run the Anthropic->Codex proxy (default port %d)
-  claude2openai run [args...]   Start/attach to the proxy and launch claude with args
-  claude2openai test            Send a tiny request through the pipeline and print the reply
+  claude2openai server [port]             Run the Anthropic->Codex proxy (default port %d)
+  claude2openai run [args...]             Start/attach to Codex and launch claude
+  claude2openai test                      Test the Codex pipeline
+  claude2openai --backend bedrock server [port]
+  claude2openai --backend bedrock run [args...]
+  claude2openai --backend bedrock test
 
 Environment:
-  CODEX_MODEL   Override the default Codex model (default %s)
-
-Auth is read from %%USERPROFILE%%\.codex\auth.json (ChatGPT OAuth, read-only
-except careful token-refresh write-back). Never prints token values.
+  CODEX_MODEL       Codex main model (default %s)
+  BEDROCK_OPENAI=1  Select Bedrock Converse instead of Codex
+  BEDROCK_MODEL     astra, sol, terra, luna, or a full inference profile id
+  BEDROCK_SMALL_MODEL  Model for incoming haiku requests (default luna)
 `, defaultPort, codexDefaultModel)
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	args := os.Args[1:]
+	backend := "codex"
+	if bedrockEnabled() {
+		backend = "bedrock"
+	}
+	if len(args) >= 2 && args[0] == "--backend" {
+		backend = strings.ToLower(args[1])
+		args = args[2:]
+	}
+	if len(args) < 1 {
 		usage()
 		os.Exit(2)
 	}
-	switch os.Args[1] {
+	if backend == "bedrock" {
+		runBedrockCommand(args)
+		return
+	}
+	if backend != "codex" {
+		fmt.Fprintf(os.Stderr, "unknown backend %q\n", backend)
+		os.Exit(2)
+	}
+	switch args[0] {
 	case "server":
-		port := defaultPort
-		if len(os.Args) >= 3 {
-			p, err := strconv.Atoi(os.Args[2])
-			if err != nil || p <= 0 || p > 65535 {
-				fmt.Fprintf(os.Stderr, "invalid port %q\n", os.Args[2])
-				os.Exit(2)
-			}
-			port = p
-		}
-		runServer(port)
+		runServer(parsePort(args, defaultPort))
 	case "run":
-		runClaude(os.Args[2:])
+		runClaude(args[1:])
 	case "test":
 		runTest()
 	case "help", "--help", "-h":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", args[0])
 		usage()
 		os.Exit(2)
 	}
+}
+
+func runBedrockCommand(args []string) {
+	switch args[0] {
+	case "server":
+		runBedrockServer(parsePort(args, defaultBedrockPort))
+	case "run":
+		runBedrockClaude(args[1:])
+	case "test":
+		runBedrockTest()
+	case "help", "--help", "-h":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "bedrock backend supports server and test, got %q\n", args[0])
+		os.Exit(2)
+	}
+}
+
+func parsePort(args []string, fallback int) int {
+	if len(args) < 2 {
+		return fallback
+	}
+	port, err := strconv.Atoi(args[1])
+	if err != nil || port <= 0 || port > 65535 {
+		fmt.Fprintf(os.Stderr, "invalid port %q\n", args[1])
+		os.Exit(2)
+	}
+	return port
 }
