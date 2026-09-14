@@ -371,18 +371,13 @@ func (s *bedrockServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("bedrock messages: model %q -> %q, effort=%q, %d messages, stream=%v", req.Model, aws.ToString(input.ModelId), resolveBedrockEffort(&req, aws.ToString(input.ModelId)), len(input.Messages), req.Stream)
-	response, err := s.converseWithRetry(r.Context(), input)
-	if err != nil {
-		status, errType, message := bedrockError(err)
+	run := s.runWithEmptyRetry(r.Context(), input, resolveBedrockEffort(&req, aws.ToString(input.ModelId)))
+	if run.err != nil && len(run.events) == 0 {
+		status, errType, message := bedrockError(run.err)
 		writeAnthropicError(w, status, errType, message, false)
 		return
 	}
-	defer response.GetStream().Close()
-	if req.Stream {
-		s.streamResponse(w, response.GetStream(), aws.ToString(input.ModelId))
-		return
-	}
-	s.unaryResponse(w, response.GetStream(), aws.ToString(input.ModelId))
+	s.writeRun(w, run, req.Stream, aws.ToString(input.ModelId))
 }
 
 func (s *bedrockServer) converseWithRetry(ctx context.Context, input *bedrockruntime.ConverseStreamInput) (*bedrockruntime.ConverseStreamOutput, error) {
@@ -437,6 +432,9 @@ type bedrockStreamState struct {
 	stopReason  string
 	usage       map[string]int
 	blockKinds  map[int32]string
+	reasoning   string
+	outIndex    map[int32]int
+	nextIndex   int
 	blockOpened map[int32]bool
 	finished    bool
 }
@@ -445,8 +443,19 @@ func newBedrockStreamState(model string) *bedrockStreamState {
 	return &bedrockStreamState{
 		model: model, messageID: "msg_" + randomHex(12), stopReason: "end_turn",
 		usage:      map[string]int{"input_tokens": 0, "output_tokens": 0},
-		blockKinds: map[int32]string{}, blockOpened: map[int32]bool{},
+		blockKinds: map[int32]string{}, blockOpened: map[int32]bool{}, outIndex: map[int32]int{},
 	}
+}
+
+// clientIndex renumbers Bedrock block indices so the client sees contiguous
+// indices from 0: reasoning blocks are dropped, so their indices must not leak.
+func (s *bedrockStreamState) clientIndex(idx int32) int {
+	if v, ok := s.outIndex[idx]; ok {
+		return v
+	}
+	s.outIndex[idx] = s.nextIndex
+	s.nextIndex++
+	return s.outIndex[idx]
 }
 
 func (s *bedrockStreamState) handle(event brtypes.ConverseStreamOutput) []anthropicEvent {
@@ -466,7 +475,7 @@ func (s *bedrockStreamState) handle(event brtypes.ConverseStreamOutput) []anthro
 		if tool, ok := ev.Value.Start.(*brtypes.ContentBlockStartMemberToolUse); ok {
 			s.blockKinds[idx] = "tool_use"
 			s.blockOpened[idx] = true
-			out = append(out, blockStartEvent(int(idx), map[string]any{
+			out = append(out, blockStartEvent(s.clientIndex(idx), map[string]any{
 				"type": "tool_use", "id": aws.ToString(tool.Value.ToolUseId), "name": aws.ToString(tool.Value.Name), "input": map[string]any{},
 			}))
 		}
@@ -477,17 +486,31 @@ func (s *bedrockStreamState) handle(event brtypes.ConverseStreamOutput) []anthro
 		case *brtypes.ContentBlockDeltaMemberText:
 			if !s.blockOpened[idx] {
 				s.blockKinds[idx], s.blockOpened[idx] = "text", true
-				out = append(out, blockStartEvent(int(idx), map[string]any{"type": "text", "text": ""}))
+				out = append(out, blockStartEvent(s.clientIndex(idx), map[string]any{"type": "text", "text": ""}))
 			}
-			out = append(out, blockDeltaEvent(int(idx), map[string]any{"type": "text_delta", "text": delta.Value}))
+			out = append(out, blockDeltaEvent(s.clientIndex(idx), map[string]any{"type": "text_delta", "text": delta.Value}))
 		case *brtypes.ContentBlockDeltaMemberToolUse:
-			out = append(out, blockDeltaEvent(int(idx), map[string]any{"type": "input_json_delta", "partial_json": aws.ToString(delta.Value.Input)}))
+			out = append(out, blockDeltaEvent(s.clientIndex(idx), map[string]any{"type": "input_json_delta", "partial_json": aws.ToString(delta.Value.Input)}))
+		case *brtypes.ContentBlockDeltaMemberReasoningContent:
+			if os.Getenv("BEDROCK_DEBUG") != "" {
+				log.Printf("bedrock stream: reasoning delta kind %T", delta.Value)
+			}
+			if text, ok := delta.Value.(*brtypes.ReasoningContentBlockDeltaMemberText); ok {
+				s.reasoning += text.Value
+				if os.Getenv("BEDROCK_DEBUG") != "" {
+					log.Printf("bedrock stream: reasoning delta %q", text.Value)
+				}
+			}
+		default:
+			if os.Getenv("BEDROCK_DEBUG") != "" {
+				log.Printf("bedrock stream: unhandled delta %T at block %d", delta, idx)
+			}
 		}
 	case *brtypes.ConverseStreamOutputMemberContentBlockStop:
 		idx := aws.ToInt32(ev.Value.ContentBlockIndex)
 		if s.blockOpened[idx] {
 			s.blockOpened[idx] = false
-			out = append(out, blockStopEvent(int(idx)))
+			out = append(out, blockStopEvent(s.clientIndex(idx)))
 		}
 	case *brtypes.ConverseStreamOutputMemberMessageStop:
 		start()
@@ -530,7 +553,7 @@ func (s *bedrockStreamState) finalize() []anthropicEvent {
 	}
 	for idx, opened := range s.blockOpened {
 		if opened {
-			out = append(out, blockStopEvent(int(idx)))
+			out = append(out, blockStopEvent(s.clientIndex(idx)))
 		}
 	}
 	out = append(out, s.finish()...)
@@ -668,7 +691,7 @@ func runBedrockTest() {
 
 	model := mapBedrockModel("claude-test")
 	testRequest := &anthropicRequest{
-		Model: "claude-test", MaxTokens: 512,
+		Model: "claude-test", MaxTokens: 4096,
 		System:   jsonString("You are a concise assistant."),
 		Messages: []anthropicMessage{{Role: "user", Content: jsonString("Reply with exactly: BEDROCK OPENAI OK")}},
 	}
@@ -705,7 +728,7 @@ func runBedrockTest() {
 		}
 	}
 	if reply == "" {
-		fmt.Fprintln(os.Stderr, "claude2openai bedrock test: response contained no text")
+		fmt.Fprintf(os.Stderr, "claude2openai bedrock test: response contained no text (stop_reason=%s, blocks=%d, usage=%v)\n", msg.StopReason, len(msg.Content), msg.Usage)
 		os.Exit(1)
 	}
 	fmt.Printf("reply: %s\n", reply)

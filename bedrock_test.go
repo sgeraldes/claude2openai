@@ -202,3 +202,34 @@ func TestBedrockStreamSequence(t *testing.T) {
 		t.Fatalf("content: %+v", msg.Content)
 	}
 }
+
+// A redacted reasoning block at Bedrock index 0 must not leak a gap: the text
+// that follows at index 1 is the client's block 0, otherwise the unary
+// aggregation drops it (seen on gpt-5.6-terra at effort max, 14-sep-2026).
+func TestBedrockStreamRenumbersAfterReasoning(t *testing.T) {
+	state := newBedrockStreamState("us.openai.gpt-5.6-terra")
+	events := []brtypes.ConverseStreamOutput{
+		&brtypes.ConverseStreamOutputMemberMessageStart{Value: brtypes.MessageStartEvent{Role: brtypes.ConversationRoleAssistant}},
+		&brtypes.ConverseStreamOutputMemberContentBlockDelta{Value: brtypes.ContentBlockDeltaEvent{ContentBlockIndex: aws.Int32(0), Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{Value: &brtypes.ReasoningContentBlockDeltaMemberRedactedContent{Value: []byte("x")}}}},
+		&brtypes.ConverseStreamOutputMemberContentBlockStop{Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: aws.Int32(0)}},
+		&brtypes.ConverseStreamOutputMemberContentBlockDelta{Value: brtypes.ContentBlockDeltaEvent{ContentBlockIndex: aws.Int32(1), Delta: &brtypes.ContentBlockDeltaMemberText{Value: "BEDROCK OPENAI OK"}}},
+		&brtypes.ConverseStreamOutputMemberContentBlockStop{Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: aws.Int32(1)}},
+		&brtypes.ConverseStreamOutputMemberMessageStop{Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn}},
+	}
+	var out []anthropicEvent
+	for _, event := range events {
+		out = append(out, state.handle(event)...)
+	}
+	out = append(out, state.finalize()...)
+	want := "message_start,content_block_start,content_block_delta,content_block_stop,message_delta,message_stop"
+	if got := strings.Join(eventTypes(out), ","); got != want {
+		t.Fatalf("event sequence:\n got %s\nwant %s", got, want)
+	}
+	msg, err := aggregateEvents(out, "us.openai.gpt-5.6-terra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.Content) != 1 || msg.Content[0]["text"] != "BEDROCK OPENAI OK" {
+		t.Fatalf("content = %+v", msg.Content)
+	}
+}
