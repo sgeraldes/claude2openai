@@ -29,6 +29,10 @@ type anthropicRequest struct {
 	Effort        string                 `json:"effort,omitempty"`
 	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
 	Metadata      map[string]any         `json:"metadata,omitempty"`
+	// Overrides por petición (cabeceras X-Bedrock-Model / X-Bedrock-Effort): un mismo proxy
+	// sirve corridas con distinto modelo y esfuerzo sin reiniciarse.
+	bedrockModel  string
+	bedrockEffort string
 }
 
 type anthropicOutputConfig struct {

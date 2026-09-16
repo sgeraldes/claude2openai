@@ -177,11 +177,11 @@ func TestMaskToken(t *testing.T) {
 
 func TestSanitizeToolName(t *testing.T) {
 	cases := map[string]string{
-		"Bash":          "Bash",
-		"mcp__x__y":     "mcp__x__y",
-		"bad name!":     "bad_name_",
+		"Bash":           "Bash",
+		"mcp__x__y":      "mcp__x__y",
+		"bad name!":      "bad_name_",
 		"tool.with.dots": "tool_with_dots",
-		"":              "tool",
+		"":               "tool",
 	}
 	for in, want := range cases {
 		if got := sanitizeToolName(in); got != want {

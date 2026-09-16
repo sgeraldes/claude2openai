@@ -52,6 +52,28 @@ func TestResolveBedrockEffort(t *testing.T) {
 	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "medium" {
 		t.Fatalf("BEDROCK_EFFORT precedence = %q", got)
 	}
+	req.bedrockEffort = "max"
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "max" {
+		t.Fatalf("X-Bedrock-Effort precedence = %q", got)
+	}
+	req.bedrockEffort = "extreme"
+	if got := resolveBedrockEffort(req, "us.openai.gpt-6-astra"); got != "medium" {
+		t.Fatalf("invalid X-Bedrock-Effort should fall through = %q", got)
+	}
+}
+
+func TestMapBedrockModelWithOverride(t *testing.T) {
+	t.Setenv("BEDROCK_MODEL", "sol")
+	t.Setenv("BEDROCK_SMALL_MODEL", "luna")
+	if got := mapBedrockModelWithOverride("claude-opus-5", "terra"); got != "us.openai.gpt-5.6-terra" {
+		t.Fatalf("override = %q", got)
+	}
+	if got := mapBedrockModelWithOverride("claude-haiku-4-5", "terra"); got != "us.openai.gpt-5.6-luna" {
+		t.Fatalf("haiku keeps the small model = %q", got)
+	}
+	if got := mapBedrockModelWithOverride("claude-opus-5", ""); got != "us.openai.gpt-5.6-sol" {
+		t.Fatalf("no override = %q", got)
+	}
 }
 
 func TestTranslateBedrockRequest(t *testing.T) {

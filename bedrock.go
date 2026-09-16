@@ -60,12 +60,19 @@ func bedrockModelAlias(value string) string {
 }
 
 func mapBedrockModel(requested string) string {
+	return mapBedrockModelWithOverride(requested, "")
+}
+
+func mapBedrockModelWithOverride(requested, override string) string {
 	if strings.Contains(strings.ToLower(requested), "haiku") {
 		small := strings.TrimSpace(os.Getenv("BEDROCK_SMALL_MODEL"))
 		if small == "" {
 			small = "luna"
 		}
 		return bedrockModelAlias(small)
+	}
+	if strings.TrimSpace(override) != "" {
+		return bedrockModelAlias(override)
 	}
 	return bedrockModelAlias(os.Getenv("BEDROCK_MODEL"))
 }
@@ -107,6 +114,12 @@ func claudeCodeEffort(req *anthropicRequest) string {
 }
 
 func resolveBedrockEffort(req *anthropicRequest, model string) string {
+	if value := strings.ToLower(strings.TrimSpace(req.bedrockEffort)); value != "" {
+		if isBedrockEffort(value) {
+			return value
+		}
+		log.Printf("bedrock: ignoring invalid X-Bedrock-Effort %q; expected low, medium, high, or max", value)
+	}
 	if value := strings.ToLower(strings.TrimSpace(os.Getenv("BEDROCK_EFFORT"))); value != "" {
 		if isBedrockEffort(value) {
 			return value
@@ -177,7 +190,7 @@ func (s *bedrockServer) mux() *http.ServeMux {
 }
 
 func translateBedrockRequest(req *anthropicRequest) (*bedrockruntime.ConverseStreamInput, error) {
-	model := mapBedrockModel(req.Model)
+	model := mapBedrockModelWithOverride(req.Model, req.bedrockModel)
 	maxTokens := int32(req.MaxTokens)
 	if maxTokens <= 0 {
 		maxTokens = 8192
@@ -365,6 +378,8 @@ func (s *bedrockServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON: "+err.Error(), false)
 		return
 	}
+	req.bedrockModel = r.Header.Get("X-Bedrock-Model")
+	req.bedrockEffort = r.Header.Get("X-Bedrock-Effort")
 	input, err := translateBedrockRequest(&req)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", err.Error(), false)
