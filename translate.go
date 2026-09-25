@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -441,8 +442,41 @@ func translateRequest(req *anthropicRequest) *responsesRequest {
 	if out.Input == nil {
 		out.Input = []responsesItem{}
 	}
-	if effort, ok := thinkingEffort(req.Thinking); ok {
+	if effort, ok := codexEffort(req); ok {
 		out.Reasoning = &responsesReason{Effort: effort, Summary: "auto"}
 	}
 	return out
+}
+
+// codexEffort picks the reasoning effort sent to the codex backend: CODEX_EFFORT when set, else
+// the effort Claude Code asks for (output_config.effort, which CLAUDE_CODE_EFFORT_LEVEL and /effort
+// set), else a thinking budget. Claude Code sends thinking {"type":"adaptive"} with no budget and
+// the effort in output_config; reading only the budget ran every request at "medium" whatever the
+// level asked for (measured 25-Sep-2026 with a capture of Claude Code's requests, low to max).
+func codexEffort(req *anthropicRequest) (string, bool) {
+	if value := strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_EFFORT"))); value != "" {
+		if effort, ok := mapCodexEffort(value); ok {
+			return effort, true
+		}
+		log.Printf("codex: ignoring invalid CODEX_EFFORT %q; expected none, minimal, low, medium, high, xhigh or max", value)
+	}
+	if value := claudeCodeEffort(req); value != "" {
+		if effort, ok := mapCodexEffort(value); ok {
+			return effort, true
+		}
+		log.Printf("codex: ignoring unsupported effort %q; the backend uses its default", value)
+	}
+	return "", false
+}
+
+// mapCodexEffort accepts the reasoning efforts the codex backend validates. Its 400 for anything
+// else lists them (25-Sep-2026, gpt-5.6-sol): none, minimal, low, medium, high, xhigh and max, which
+// covers every Claude Code level (low, medium, high, xhigh, max) as is.
+func mapCodexEffort(value string) (string, bool) {
+	switch value {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return value, true
+	default:
+		return "", false
+	}
 }
