@@ -126,18 +126,21 @@ Models served by the account (verified via `GET /backend-api/codex/models`):
 - `max_tokens` is **dropped**: the backend rejects `max_output_tokens` (400).
 - `temperature`, `top_p`, `top_k`, `stop_sequences` are not supported by the
   Codex backend and are dropped.
-- The reasoning effort sent to Codex is, in order: `CODEX_EFFORT` on the proxy,
-  the request's `effort` / `output_config.effort` (what `CLAUDE_CODE_EFFORT_LEVEL`
-  and `/effort` set in Claude Code), `CLAUDE_CODE_EFFORT_LEVEL` in the proxy's own
-  environment, then the `thinking` token budget (under 2,048 low, 15,000 or more
-  high, medium otherwise). The backend accepts `none`, `minimal`, `low`, `medium`,
-  `high`, `xhigh` and `max` (its 400 for anything else says so), so every Claude
-  Code level passes as is; the `messages:` log line shows the effort sent. Before
-  25-Sep-2026 only the budget was read, and Claude Code sends
-  `thinking: {"type":"adaptive"}` with no budget, so every run went out at medium
-  whatever level it asked for. Summary `auto`: reasoning summaries stream back as
-  Anthropic thinking blocks. If thinking is not requested, reasoning items are
-  dropped.
+- The reasoning effort sent to Codex is the first valid value of: `CODEX_EFFORT`
+  on the proxy (applies to every request), the request's `effort`, its
+  `output_config.effort` (what `CLAUDE_CODE_EFFORT_LEVEL` and `/effort` set in
+  Claude Code), and, only when the request asks for thinking,
+  `CLAUDE_CODE_EFFORT_LEVEL` in the proxy's own environment and the `thinking`
+  token budget (under 2,048 low, 15,000 or more high, medium otherwise). An
+  invalid value is logged and the next one is tried. The backend accepts `none`,
+  `minimal`, `low`, `medium`, `high`, `xhigh` and `max` (its 400 for anything else
+  says so), so every Claude Code level passes as is; the `messages:` log line
+  shows the effort sent. Before 25-Sep-2026 only the budget was read, and Claude
+  Code sends `thinking: {"type":"adaptive"}` with no budget, so every run went out
+  at medium whatever level it asked for.
+- Reasoning summaries (summary `auto`) stream back as Anthropic thinking blocks
+  when the request asked for thinking; otherwise they are dropped, even when
+  `CODEX_EFFORT` made the model reason.
 - `/v1/messages/count_tokens` returns a local ~4-chars-per-token estimate.
 
 ## Backend Bedrock (modelos OpenAI)

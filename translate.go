@@ -448,23 +448,33 @@ func translateRequest(req *anthropicRequest) *responsesRequest {
 	return out
 }
 
-// codexEffort picks the reasoning effort sent to the codex backend: CODEX_EFFORT when set, else
-// the effort Claude Code asks for (output_config.effort, which CLAUDE_CODE_EFFORT_LEVEL and /effort
-// set), else a thinking budget. Claude Code sends thinking {"type":"adaptive"} with no budget and
-// the effort in output_config; reading only the budget ran every request at "medium" whatever the
-// level asked for (measured 25-Sep-2026 with a capture of Claude Code's requests, low to max).
+// codexEffort picks the reasoning effort sent to the codex backend. The first valid value wins, in
+// this order: CODEX_EFFORT on the proxy (always applies, it is the operator's override); the
+// request's effort, then output_config.effort (what CLAUDE_CODE_EFFORT_LEVEL and /effort set in
+// Claude Code); then, only when the request asks for thinking, CLAUDE_CODE_EFFORT_LEVEL in the
+// proxy's own environment and the thinking budget. An invalid value is logged and the next source
+// is tried. Claude Code sends thinking {"type":"adaptive"} with no budget and the effort in
+// output_config; reading only the budget ran every request at "medium" whatever the level asked
+// for (measured 25-Sep-2026 with a capture of Claude Code's requests, low to max).
 func codexEffort(req *anthropicRequest) (string, bool) {
-	if value := strings.ToLower(strings.TrimSpace(os.Getenv("CODEX_EFFORT"))); value != "" {
-		if effort, ok := mapCodexEffort(value); ok {
-			return effort, true
-		}
-		log.Printf("codex: ignoring invalid CODEX_EFFORT %q; expected none, minimal, low, medium, high, xhigh or max", value)
+	type source struct{ name, value string }
+	sources := []source{{"CODEX_EFFORT", os.Getenv("CODEX_EFFORT")}, {"effort", req.Effort}}
+	if req.OutputConfig != nil {
+		sources = append(sources, source{"output_config.effort", req.OutputConfig.Effort})
 	}
-	if value := claudeCodeEffort(req); value != "" {
+	if budget, wants := thinkingEffort(req.Thinking); wants {
+		sources = append(sources, source{"CLAUDE_CODE_EFFORT_LEVEL", os.Getenv("CLAUDE_CODE_EFFORT_LEVEL")},
+			source{"thinking budget", budget})
+	}
+	for _, s := range sources {
+		value := strings.ToLower(strings.TrimSpace(s.value))
+		if value == "" {
+			continue
+		}
 		if effort, ok := mapCodexEffort(value); ok {
 			return effort, true
 		}
-		log.Printf("codex: ignoring unsupported effort %q; the backend uses its default", value)
+		log.Printf("codex: ignoring unsupported %s %q (expected none, minimal, low, medium, high, xhigh or max)", s.name, value)
 	}
 	return "", false
 }
