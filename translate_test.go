@@ -327,3 +327,68 @@ func TestTranslateRequestNoThinking(t *testing.T) {
 		t.Errorf("gpt model should pass through: %q", out.Model)
 	}
 }
+
+// Claude Code sends thinking {"type":"adaptive"} with no budget and the level in output_config
+// (captured 25-Sep-2026 for low, medium, high, xhigh and max). The level must reach the backend.
+func TestCodexEffortFollowsClaudeCode(t *testing.T) {
+	t.Setenv("CODEX_EFFORT", "")
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "")
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		out := translateRequest(&anthropicRequest{
+			Model:        "claude-opus-5",
+			MaxTokens:    10,
+			Thinking:     &anthropicThinking{Type: "adaptive"},
+			OutputConfig: &anthropicOutputConfig{Effort: level},
+		})
+		if out.Reasoning == nil || out.Reasoning.Effort != level {
+			t.Errorf("level %q: reasoning %+v", level, out.Reasoning)
+		}
+	}
+}
+
+func TestCodexEffortOverrides(t *testing.T) {
+	adaptive := &anthropicThinking{Type: "adaptive"}
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "")
+	t.Setenv("CODEX_EFFORT", "xhigh")
+	out := translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10, Thinking: adaptive,
+		OutputConfig: &anthropicOutputConfig{Effort: "low"}})
+	if out.Reasoning == nil || out.Reasoning.Effort != "xhigh" {
+		t.Errorf("CODEX_EFFORT should win: %+v", out.Reasoning)
+	}
+	t.Setenv("CODEX_EFFORT", "banana")
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10, Thinking: adaptive,
+		OutputConfig: &anthropicOutputConfig{Effort: "high"}})
+	if out.Reasoning == nil || out.Reasoning.Effort != "high" {
+		t.Errorf("an invalid CODEX_EFFORT falls back to the request: %+v", out.Reasoning)
+	}
+	t.Setenv("CODEX_EFFORT", "")
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10, Thinking: adaptive,
+		OutputConfig: &anthropicOutputConfig{Effort: "turbo"}})
+	if out.Reasoning == nil || out.Reasoning.Effort != "medium" {
+		t.Errorf("an unknown level falls through to the adaptive default: %+v", out.Reasoning)
+	}
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "high")
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10, Thinking: adaptive,
+		OutputConfig: &anthropicOutputConfig{Effort: "turbo"}})
+	if out.Reasoning == nil || out.Reasoning.Effort != "high" {
+		t.Errorf("an unknown level falls through to CLAUDE_CODE_EFFORT_LEVEL: %+v", out.Reasoning)
+	}
+	// Without thinking the proxy's CLAUDE_CODE_EFFORT_LEVEL does not add reasoning; CODEX_EFFORT does.
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10})
+	if out.Reasoning != nil {
+		t.Errorf("no thinking, no explicit effort: no reasoning expected, got %+v", out.Reasoning)
+	}
+	t.Setenv("CODEX_EFFORT", "low")
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10})
+	if out.Reasoning == nil || out.Reasoning.Effort != "low" {
+		t.Errorf("CODEX_EFFORT applies to every request: %+v", out.Reasoning)
+	}
+	t.Setenv("CODEX_EFFORT", "")
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "")
+	// A request with no effort still maps a thinking budget, as before.
+	out = translateRequest(&anthropicRequest{Model: "claude-opus-5", MaxTokens: 10,
+		Thinking: &anthropicThinking{Type: "enabled", BudgetTokens: 20000}})
+	if out.Reasoning == nil || out.Reasoning.Effort != "high" {
+		t.Errorf("budget fallback: %+v", out.Reasoning)
+	}
+}

@@ -112,8 +112,12 @@ func (s *proxyServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	upstream := translateRequest(&req)
-	log.Printf("messages: model %q -> %q, %d input items, %d tools, stream=%v",
-		req.Model, upstream.Model, len(upstream.Input), len(upstream.Tools), req.Stream)
+	effort := "default"
+	if upstream.Reasoning != nil {
+		effort = upstream.Reasoning.Effort
+	}
+	log.Printf("messages: model %q -> %q, effort=%q, %d input items, %d tools, stream=%v",
+		req.Model, upstream.Model, effort, len(upstream.Input), len(upstream.Tools), req.Stream)
 
 	payload, err := json.Marshal(upstream)
 	if err != nil {

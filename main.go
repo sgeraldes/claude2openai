@@ -25,6 +25,8 @@ Usage:
 
 Environment:
   CODEX_MODEL       Codex main model (default %s)
+  CODEX_EFFORT      none, minimal, low, medium, high, xhigh or max; overrides the
+                    effort Claude Code asks for (CLAUDE_CODE_EFFORT_LEVEL, /effort)
   BEDROCK_OPENAI=1  Select Bedrock Converse instead of Codex
   BEDROCK_MODEL     astra, sol, terra, luna, or a full inference profile id
   BEDROCK_SMALL_MODEL  Model for incoming haiku requests (default luna)

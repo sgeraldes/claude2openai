@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -441,8 +442,51 @@ func translateRequest(req *anthropicRequest) *responsesRequest {
 	if out.Input == nil {
 		out.Input = []responsesItem{}
 	}
-	if effort, ok := thinkingEffort(req.Thinking); ok {
+	if effort, ok := codexEffort(req); ok {
 		out.Reasoning = &responsesReason{Effort: effort, Summary: "auto"}
 	}
 	return out
+}
+
+// codexEffort picks the reasoning effort sent to the codex backend. The first valid value wins, in
+// this order: CODEX_EFFORT on the proxy (always applies, it is the operator's override); the
+// request's effort, then output_config.effort (what CLAUDE_CODE_EFFORT_LEVEL and /effort set in
+// Claude Code); then, only when the request asks for thinking, CLAUDE_CODE_EFFORT_LEVEL in the
+// proxy's own environment and the thinking budget. An invalid value is logged and the next source
+// is tried. Claude Code sends thinking {"type":"adaptive"} with no budget and the effort in
+// output_config; reading only the budget ran every request at "medium" whatever the level asked
+// for (measured 25-Sep-2026 with a capture of Claude Code's requests, low to max).
+func codexEffort(req *anthropicRequest) (string, bool) {
+	type source struct{ name, value string }
+	sources := []source{{"CODEX_EFFORT", os.Getenv("CODEX_EFFORT")}, {"effort", req.Effort}}
+	if req.OutputConfig != nil {
+		sources = append(sources, source{"output_config.effort", req.OutputConfig.Effort})
+	}
+	if budget, wants := thinkingEffort(req.Thinking); wants {
+		sources = append(sources, source{"CLAUDE_CODE_EFFORT_LEVEL", os.Getenv("CLAUDE_CODE_EFFORT_LEVEL")},
+			source{"thinking budget", budget})
+	}
+	for _, s := range sources {
+		value := strings.ToLower(strings.TrimSpace(s.value))
+		if value == "" {
+			continue
+		}
+		if effort, ok := mapCodexEffort(value); ok {
+			return effort, true
+		}
+		log.Printf("codex: ignoring unsupported %s %q (expected none, minimal, low, medium, high, xhigh or max)", s.name, value)
+	}
+	return "", false
+}
+
+// mapCodexEffort accepts the reasoning efforts the codex backend validates. Its 400 for anything
+// else lists them (25-Sep-2026, gpt-5.6-sol): none, minimal, low, medium, high, xhigh and max, which
+// covers every Claude Code level (low, medium, high, xhigh, max) as is.
+func mapCodexEffort(value string) (string, bool) {
+	switch value {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return value, true
+	default:
+		return "", false
+	}
 }
